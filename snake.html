@@ -845,10 +845,11 @@ function drawInterp(){
 function drawTube(pos,hd,pw){
   if(!pos.length)return;
   const ghost=pw==='ghost';
-  const sw=CELL*.78;
+  const sw=CELL*.76;
   const isJump=(a,b)=>Math.abs(a.x-b.x)>1||Math.abs(a.y-b.y)>1;
+  const cc=p=>({x:p.x*CELL+CELL/2,y:p.y*CELL+CELL/2});
 
-  // build segments (break at wrap-around)
+  // split at wrap-around gaps
   const segs=[[]];
   for(let i=0;i<pos.length;i++){
     const last=segs[segs.length-1];
@@ -856,85 +857,87 @@ function drawTube(pos,hd,pw){
     segs[segs.length-1].push(pos[i]);
   }
 
-  const cc=p=>({x:p.x*CELL+CELL/2,y:p.y*CELL+CELL/2});
-
-  ctx.save();ctx.lineCap='round';ctx.lineJoin='round';
+  ctx.save();
+  ctx.lineCap='round';
+  ctx.lineJoin='round';
+  ctx.shadowBlur=0; // no shadowBlur on paths — causes flicker on complex curves
 
   for(const seg of segs){
     if(seg.length<1)continue;
     const pts=seg.map(cc);
-    const tail=Math.max(0,~~(pts.length*.28)); // last 28% = fading tail
+    const n=pts.length;
 
-    // build bezier path through midpoints
+    // smooth bezier path through segment midpoints
     const buildPath=()=>{
-      ctx.beginPath();ctx.moveTo(pts[0].x,pts[0].y);
-      for(let i=0;i<pts.length-1;i++){
-        const m={x:(pts[i].x+pts[i+1].x)/2,y:(pts[i].y+pts[i+1].y)/2};
-        ctx.quadraticCurveTo(pts[i].x,pts[i].y,m.x,m.y);
+      ctx.beginPath();
+      ctx.moveTo(pts[0].x,pts[0].y);
+      for(let i=0;i<n-1;i++){
+        const mx=(pts[i].x+pts[i+1].x)*.5, my=(pts[i].y+pts[i+1].y)*.5;
+        ctx.quadraticCurveTo(pts[i].x,pts[i].y,mx,my);
       }
-      ctx.lineTo(pts[pts.length-1].x,pts[pts.length-1].y);
+      ctx.lineTo(pts[n-1].x,pts[n-1].y);
     };
 
-    // outer glow
-    ctx.lineWidth=sw+10;
-    ctx.strokeStyle=ghost?'rgba(0,200,255,.10)':'rgba(57,255,20,.07)';
+    // Pass 1 — wide ambient glow (no shadowBlur needed, just wide+transparent)
+    ctx.lineWidth=sw+14;
+    ctx.strokeStyle=ghost?'rgba(0,212,255,.07)':'rgba(57,255,20,.08)';
     buildPath();ctx.stroke();
 
-    // main body colour
-    if(ghost){
-      ctx.strokeStyle='rgba(0,175,255,.72)';
-      ctx.shadowColor='#00d4ff';ctx.shadowBlur=14;
-    }else if(pts.length>1){
-      const g=ctx.createLinearGradient(pts[0].x,pts[0].y,pts[pts.length-1].x,pts[pts.length-1].y);
-      g.addColorStop(0,'#45ff20');g.addColorStop(1,'#0b5200');
-      ctx.strokeStyle=g;
-      ctx.shadowColor='#39ff14';ctx.shadowBlur=10;
-    }else{ctx.strokeStyle='#39ff14';ctx.shadowColor='#39ff14';ctx.shadowBlur=10;}
-    ctx.lineWidth=sw;buildPath();ctx.stroke();ctx.shadowBlur=0;
-
-    // inner highlight ridge
-    ctx.lineWidth=sw*.38;
-    ctx.strokeStyle=ghost?'rgba(190,240,255,.22)':'rgba(200,255,130,.20)';
+    // Pass 2 — mid glow
+    ctx.lineWidth=sw+5;
+    ctx.strokeStyle=ghost?'rgba(0,190,255,.11)':'rgba(57,255,20,.13)';
     buildPath();ctx.stroke();
 
-    // fade tail by overdrawing with bg colour + alpha
-    if(tail>0&&pts.length>2){
-      ctx.save();
-      for(let i=pts.length-tail;i<pts.length-1;i++){
-        const t=(i-(pts.length-tail))/tail;
-        ctx.globalAlpha=t*.82;
-        ctx.strokeStyle='#07071a';ctx.lineWidth=sw+2;ctx.shadowBlur=0;
-        ctx.beginPath();
-        const m={x:(pts[i].x+pts[i+1].x)/2,y:(pts[i].y+pts[i+1].y)/2};
-        ctx.moveTo(pts[i].x,pts[i].y);ctx.lineTo(m.x,m.y);ctx.stroke();
-      }
-      ctx.restore();
+    // Pass 3 — solid body (NO gradient — gradient direction jumps on turns)
+    ctx.lineWidth=sw;
+    ctx.strokeStyle=ghost?'rgba(0,168,255,.78)':'#39ff14';
+    buildPath();ctx.stroke();
+
+    // Pass 4 — inner highlight ridge
+    ctx.lineWidth=sw*.34;
+    ctx.strokeStyle=ghost?'rgba(175,235,255,.22)':'rgba(195,255,105,.22)';
+    buildPath();ctx.stroke();
+
+    // Tail fade — cover last 30% with bg-colour circles at rising opacity.
+    // Circles are simple arcs: no path rebuild, no flicker.
+    const tailLen=Math.max(0,~~(n*.30));
+    const tStart=n-tailLen;
+    for(let i=tStart;i<n;i++){
+      const t=tailLen>1?(i-tStart)/(tailLen-1):1; // 0→body end, 1→tip
+      ctx.globalAlpha=t*.90;
+      ctx.fillStyle='#07071a';
+      ctx.beginPath();
+      ctx.arc(pts[i].x,pts[i].y,sw*.52,0,Math.PI*2);
+      ctx.fill();
     }
+    ctx.globalAlpha=1;
   }
   ctx.restore();
 
-  // head cap
+  // Head cap — a single circle is safe with shadowBlur
   if(pos.length>0){
-    const h=cc(pos[0]),r=sw/2;
+    const h=cc(pos[0]),r=sw*.50;
     ctx.save();
+    ctx.shadowColor=ghost?'#00d4ff':'#39ff14';
+    ctx.shadowBlur=16;
     ctx.fillStyle=ghost?'#00b4ef':'#3dff16';
-    ctx.shadowColor=ghost?'#00d4ff':'#39ff14';ctx.shadowBlur=18;
     ctx.beginPath();ctx.arc(h.x,h.y,r,0,Math.PI*2);ctx.fill();
     ctx.shadowBlur=0;
-    // inner shine
-    ctx.fillStyle=ghost?'rgba(200,245,255,.32)':'rgba(190,255,90,.30)';
-    ctx.beginPath();ctx.arc(h.x-r*.22,h.y-r*.22,r*.54,0,Math.PI*2);ctx.fill();
+    // shine
+    ctx.fillStyle=ghost?'rgba(200,245,255,.30)':'rgba(185,255,85,.28)';
+    ctx.beginPath();ctx.arc(h.x-r*.20,h.y-r*.20,r*.52,0,Math.PI*2);ctx.fill();
     // eyes
-    const ex=h.x+hd.x*r*.52,ey=h.y+hd.y*r*.52;
-    const ox=hd.y*r*.36,oy=hd.x*r*.36;
-    ctx.fillStyle='#06060f';
-    ctx.beginPath();ctx.arc(ex+ox,ey-oy,r*.26,0,Math.PI*2);ctx.fill();
-    ctx.beginPath();ctx.arc(ex-ox,ey+oy,r*.26,0,Math.PI*2);ctx.fill();
-    ctx.fillStyle=ghost?'#00d4ff':'#b0ff50';
-    ctx.shadowColor=ctx.fillStyle;ctx.shadowBlur=5;
-    ctx.beginPath();ctx.arc(ex+ox,ey-oy,r*.11,0,Math.PI*2);ctx.fill();
-    ctx.beginPath();ctx.arc(ex-ox,ey+oy,r*.11,0,Math.PI*2);ctx.fill();
-    ctx.shadowBlur=0;ctx.restore();
+    const ex=h.x+hd.x*r*.50,ey=h.y+hd.y*r*.50;
+    const ox=hd.y*r*.35,oy=hd.x*r*.35;
+    ctx.fillStyle='#05050e';
+    ctx.beginPath();ctx.arc(ex+ox,ey-oy,r*.25,0,Math.PI*2);ctx.fill();
+    ctx.beginPath();ctx.arc(ex-ox,ey+oy,r*.25,0,Math.PI*2);ctx.fill();
+    ctx.fillStyle=ghost?'#00d4ff':'#aaff44';
+    ctx.shadowColor=ctx.fillStyle;ctx.shadowBlur=4;
+    ctx.beginPath();ctx.arc(ex+ox,ey-oy,r*.10,0,Math.PI*2);ctx.fill();
+    ctx.beginPath();ctx.arc(ex-ox,ey+oy,r*.10,0,Math.PI*2);ctx.fill();
+    ctx.shadowBlur=0;
+    ctx.restore();
   }
 }
 
