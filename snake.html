@@ -849,7 +849,7 @@ function drawTube(pos,hd,pw){
   const isJump=(a,b)=>Math.abs(a.x-b.x)>1||Math.abs(a.y-b.y)>1;
 
   // build segments (break at wrap-around)
-  const segs=[[[]]];
+  const segs=[[]];
   for(let i=0;i<pos.length;i++){
     const last=segs[segs.length-1];
     if(last.length&&isJump(last[last.length-1],pos[i]))segs.push([]);
