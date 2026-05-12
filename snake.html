@@ -512,10 +512,6 @@ canvas{display:block;background:var(--bg);}
         <button class="db on"     data-d="normal">Normal</button>
         <button class="db hard"   data-d="hard">Hard</button>
       </div>
-      <div id="mpick">
-        <button class="db on"  data-m="classic">◈ Classic</button>
-        <button class="db"     data-m="large">∞ Large</button>
-      </div>
       <div id="sg">
         <div>Score</div>          <div class="v"      id="ss-score">0</div>
         <div>High score</div>     <div class="v gold" id="ss-hi">0</div>
@@ -628,11 +624,9 @@ canvas{display:block;background:var(--bg);}
 'use strict';
 
 // ── sizes ──────────────────────────────────────────────────────────────────
-const VW=25,VH=25; // viewport grid — canvas always shows this many cells
-const CELL=Math.min(Math.floor(Math.min(innerWidth*.97,innerHeight*.63)/VW),21);
-const W=VW*CELL,H=VH*CELL;
-let COLS=VW,ROWS=VH; // world size — changed by map mode in init()
-let camX=VW/2,camY=VH/2; // camera centre in world-grid coords
+const COLS=25,ROWS=25;
+const CELL=Math.min(Math.floor(Math.min(innerWidth*.97,innerHeight*.63)/COLS),21);
+const W=COLS*CELL,H=ROWS*CELL;
 
 const canvas=document.getElementById('c');
 canvas.width=W;canvas.height=H;
@@ -744,8 +738,6 @@ let bonusT,bonusD,pupT,pupD,coinT;
 let aPow,aPowEnd;
 let combo,comboT,bestCombo,longest;
 let tStart,lastAt,pend=0;
-let mapSz='classic';
-let inputQ=[],renderDir={x:1,y:0}; // input queue for instant visual response
 let parts=[],pops=[],ripples=[];  // vfx
 let slotSt=null;
 let respT=0;
@@ -847,11 +839,7 @@ function getSkin(){return SKINS[INV.equipped]||SKINS.classic;}
 // ── init ───────────────────────────────────────────────────────────────────
 function init(){
   const d=DIFFS[diff];
-  // set world size
-  if(mapSz==='large'){COLS=80;ROWS=80;}else{COLS=VW;ROWS=VH;}
   const cx=~~(COLS/2),cy=~~(ROWS/2);
-  camX=cx+.5;camY=cy+.5; // start camera exactly on snake, no lerp lag
-  inputQ=[];renderDir={x:1,y:0};
   snake=[{x:cx,y:cy},{x:cx-1,y:cy},{x:cx-2,y:cy}];
   prev=snake.map(s=>({...s}));
   dir={x:1,y:0};ndir={x:1,y:0};
@@ -894,8 +882,7 @@ function hud(){
 function ms(){
   const d=DIFFS[diff];
   const base=Math.max(48,(d.base-(level-1)*7)*d.mult);
-  const lm=mapSz==='large'?.82:1; // slightly faster in large mode
-  return (aPow==='slow'?base*1.8:base)*lm;
+  return aPow==='slow'?base*1.8:base;
 }
 
 // ── main loop ──────────────────────────────────────────────────────────────
@@ -945,15 +932,12 @@ function ms(){
   // level-up banner decay
   if(lvlAnim&&Date.now()-lvlAnim.at>1800)lvlAnim=null;
 
-  updateCam();
   draw();
 })(0);
 
 // ── game tick ──────────────────────────────────────────────────────────────
 function tick(){
-  // consume one queued input per tick
-  if(inputQ.length){const nd=inputQ.shift();if(nd.x!==-dir.x||nd.y!==-dir.y)dir={...nd};}
-  renderDir={...dir};
+  dir={...ndir};
   prev=snake.map(s=>({...s}));
 
   let nx=snake[0].x+dir.x,ny=snake[0].y+dir.y;
@@ -1277,35 +1261,17 @@ function stepMenu(){
 
 // ── draw ───────────────────────────────────────────────────────────────────
 function draw(){
-  const isLarge=COLS>VW; // true when world is larger than viewport
-
-  // 1. Clear screen
   ctx.fillStyle='#07071a';ctx.fillRect(0,0,W,H);
 
-  // 2. World-space rendering — apply camera offset when in large mode
-  if(isLarge){
-    const oX=(camX-VW/2)*CELL,oY=(camY-VH/2)*CELL;
-    ctx.save();
-    ctx.translate(-oX,-oY);
-    // clip to world bounds so empty space beyond edges stays as bg fill
-    ctx.beginPath();ctx.rect(0,0,COLS*CELL,ROWS*CELL);ctx.clip();
-  }
-
-  // dot grid — only draw the visible viewport range (perf: ~625 dots regardless of world size)
-  const gx0=isLarge?Math.max(0,~~(camX-VW/2)-1):0;
-  const gy0=isLarge?Math.max(0,~~(camY-VH/2)-1):0;
-  const gx1=isLarge?Math.min(COLS,~~(camX+VW/2)+2):COLS;
-  const gy1=isLarge?Math.min(ROWS,~~(camY+VH/2)+2):ROWS;
+  // dot grid
   ctx.fillStyle='rgba(255,255,255,.016)';
-  for(let x=gx0;x<gx1;x++)for(let y=gy0;y<gy1;y++){
-    ctx.beginPath();ctx.arc(x*CELL+CELL/2,y*CELL+CELL/2,.9,0,Math.PI*2);ctx.fill();
-  }
+  for(let x=0;x<COLS;x++)for(let y=0;y<ROWS;y++){ctx.beginPath();ctx.arc(x*CELL+CELL/2,y*CELL+CELL/2,.9,0,Math.PI*2);ctx.fill();}
 
   // items
-  if(food)  dFood(food.x,food.y,'#39ff14');
-  if(bonus) dBonus();
-  if(pup)   dPup();
-  if(coin)  dCoin();
+  if(food)         dFood(food.x,food.y,'#39ff14');
+  if(bonus)        dBonus();
+  if(pup)          dPup();
+  if(coin)         dCoin();
   bombs.forEach(dBomb);
 
   // snake
@@ -1315,49 +1281,41 @@ function draw(){
   }else if(state===S.PLAYING||state===S.GAMBLING||state===S.PAUSED){
     drawInterp();
   }else if(snake&&snake.length){
-    drawTube(snake,renderDir,aPow);
+    drawTube(snake,dir,aPow);
   }
 
   // ripples
   ripples=ripples.filter(rp=>{
-    rp.r+=CELL*.14;rp.life-=rp.dc;if(rp.life<=0)return false;
+    rp.r+=CELL*.14;rp.life-=rp.dc;
+    if(rp.life<=0)return false;
     ctx.globalAlpha=rp.life*.65;ctx.strokeStyle=rp.col;
     ctx.shadowColor=rp.col;ctx.shadowBlur=8;ctx.lineWidth=2;
     ctx.beginPath();ctx.arc(rp.cx,rp.cy,rp.r,0,Math.PI*2);ctx.stroke();
-    ctx.shadowBlur=0;ctx.globalAlpha=1;return true;
+    ctx.shadowBlur=0;ctx.globalAlpha=1;
+    return true;
   });
 
   // particles
   parts=parts.filter(p=>{
-    p.x+=p.vx;p.y+=p.vy;p.vy+=.08;p.life-=p.dc;if(p.life<=0)return false;
+    p.x+=p.vx;p.y+=p.vy;p.vy+=.08;p.life-=p.dc;
+    if(p.life<=0)return false;
     ctx.globalAlpha=p.life;ctx.fillStyle=p.col;ctx.shadowColor=p.col;ctx.shadowBlur=5;
     ctx.beginPath();ctx.arc(p.x,p.y,p.r,0,Math.PI*2);ctx.fill();
-    ctx.shadowBlur=0;ctx.globalAlpha=1;return true;
+    ctx.shadowBlur=0;ctx.globalAlpha=1;
+    return true;
   });
 
   // popups
   pops=pops.filter(p=>{
-    p.y-=.65;p.life-=p.dc;if(p.life<=0)return false;
+    p.y-=.65;p.life-=p.dc;
+    if(p.life<=0)return false;
     ctx.globalAlpha=p.life;ctx.fillStyle=p.col;ctx.shadowColor=p.col;ctx.shadowBlur=7;
     ctx.textAlign='center';ctx.textBaseline='middle';
     ctx.font=`bold ${~~(CELL*.72)}px Share Tech Mono,Courier New`;
-    ctx.fillText(p.txt,p.x,p.y);ctx.shadowBlur=0;ctx.globalAlpha=1;return true;
-  });
-
-  // world boundary in large mode (drawn inside world transform so it's at the grid edges)
-  if(isLarge){
-    const h=(Date.now()/22)%360;
-    ctx.strokeStyle=`hsl(${h},100%,62%)`;ctx.lineWidth=5;
-    ctx.shadowColor=`hsl(${h},100%,62%)`;ctx.shadowBlur=16;
-    ctx.globalAlpha=.65;
-    ctx.strokeRect(2.5,2.5,COLS*CELL-5,ROWS*CELL-5);
+    ctx.fillText(p.txt,p.x,p.y);
     ctx.shadowBlur=0;ctx.globalAlpha=1;
-  }
-
-  // restore world transform
-  if(isLarge)ctx.restore();
-
-  // ── screen-space overlays (drawn in canvas coords, unaffected by camera) ──
+    return true;
+  });
 
   // power border pulse
   if(aPow){
@@ -1386,13 +1344,15 @@ function draw(){
 
   // level-up banner
   if(lvlAnim){
-    const age=Date.now()-lvlAnim.at,dur=1800,t=age/dur;
+    const age=Date.now()-lvlAnim.at,dur=1800;
+    const t=age/dur;
     let yOff=H/2;
     if(t<.18)yOff=H/2+(1-(t/.18))*H*.4;
     else if(t>.80)yOff=H/2+((t-.80)/.20)*H*.4;
     const alpha=t<.18?t/.18:(t>.80?(1-t)/.20:1);
     ctx.globalAlpha=alpha;
-    ctx.fillStyle='rgba(7,7,26,0.78)';ctx.fillRect(0,yOff-CELL*1.4,W,CELL*2.8);
+    ctx.fillStyle='rgba(7,7,26,0.78)';
+    ctx.fillRect(0,yOff-CELL*1.4,W,CELL*2.8);
     ctx.fillStyle='#ffd700';ctx.shadowColor='#ffd700';ctx.shadowBlur=22;
     ctx.textAlign='center';ctx.textBaseline='middle';
     ctx.font=`bold ${~~(CELL*.88)}px Share Tech Mono,Courier New`;
@@ -1400,7 +1360,7 @@ function draw(){
     ctx.shadowBlur=0;ctx.globalAlpha=1;
   }
 
-  // rainbow border (classic) / screen-edge glow (large) — always on canvas edges
+  // rainbow border
   dBorder();
 
   // gambling overlay on top
@@ -1414,11 +1374,10 @@ function drawInterp(){
   const pos=snake.map((s,i)=>{
     const p=prev[i]||prev[prev.length-1]||s;
     let px=p.x,py=p.y;
-    // skip wrap-around jumps (>1 cell gap means wrap teleport)
     if(Math.abs(s.x-px)>1)px=s.x;if(Math.abs(s.y-py)>1)py=s.y;
     return{x:px+(s.x-px)*t,y:py+(s.y-py)*t};
   });
-  drawTube(pos,renderDir,aPow); // renderDir updates on keypress — instant head facing
+  drawTube(pos,dir,aPow);
 }
 
 function drawTube(pos,hd,pw){
@@ -1449,14 +1408,12 @@ function drawTube(pos,hd,pw){
 
     const buildPath=()=>{
       ctx.beginPath();
-      if(n===1){ctx.arc(pts[0].x,pts[0].y,.5,0,Math.PI*2);return;}
       ctx.moveTo(pts[0].x,pts[0].y);
       for(let i=0;i<n-1;i++){
-        const mx=(pts[i].x+pts[i+1].x)*.5,my=(pts[i].y+pts[i+1].y)*.5;
+        const mx=(pts[i].x+pts[i+1].x)*.5, my=(pts[i].y+pts[i+1].y)*.5;
         ctx.quadraticCurveTo(pts[i].x,pts[i].y,mx,my);
       }
-      // path ends at midpoint of last two segments — no lineTo to tail tip
-      // (avoids the abrupt line-end jitter as the tail segment moves)
+      ctx.lineTo(pts[n-1].x,pts[n-1].y);
     };
 
     ctx.lineWidth=sw+14;ctx.strokeStyle=sk.ambient;buildPath();ctx.stroke();
@@ -1464,12 +1421,11 @@ function drawTube(pos,hd,pw){
     ctx.lineWidth=sw;   ctx.strokeStyle=sk.body;   buildPath();ctx.stroke();
     ctx.lineWidth=sw*.34;ctx.strokeStyle=sk.accent;buildPath();ctx.stroke();
 
-    // tail fade — cover only the last 4 segments max, quadratic alpha ramp
-    const tailLen=Math.min(4,Math.max(0,~~(n*.20))),tStart=n-tailLen;
+    const tailLen=Math.max(0,~~(n*.30)),tStart=n-tailLen;
     for(let i=tStart;i<n;i++){
-      const tf=tailLen>1?(i-tStart)/(tailLen-1):1;
-      ctx.globalAlpha=tf*tf*.88;ctx.fillStyle='#07071a';
-      ctx.beginPath();ctx.arc(pts[i].x,pts[i].y,sw*.54,0,Math.PI*2);ctx.fill();
+      const t=tailLen>1?(i-tStart)/(tailLen-1):1;
+      ctx.globalAlpha=t*.90;ctx.fillStyle='#07071a';
+      ctx.beginPath();ctx.arc(pts[i].x,pts[i].y,sw*.52,0,Math.PI*2);ctx.fill();
     }
     ctx.globalAlpha=1;
   }
@@ -1681,12 +1637,7 @@ document.addEventListener('keydown',e=>{
   e.preventDefault();
   if(state===S.MENU||state===S.OVER){startGame();return;}
   if(state!==S.PLAYING)return;
-  // queue up to 2 inputs; update renderDir immediately so head turns visually right away
-  const last=inputQ.length?inputQ[inputQ.length-1]:dir;
-  if(d.x!==-last.x||d.y!==-last.y){
-    if(inputQ.length>=2)inputQ.shift();
-    inputQ.push(d);renderDir={...d};
-  }
+  if(d.x!==-dir.x||d.y!==-dir.y)ndir=d;
 });
 
 let tx=0,ty=0;
@@ -1700,11 +1651,7 @@ canvas.addEventListener('touchend',e=>{
   const d=Math.abs(dx)>Math.abs(dy)?(dx>0?DM.ArrowRight:DM.ArrowLeft):(dy>0?DM.ArrowDown:DM.ArrowUp);
   if(state===S.MENU||state===S.OVER){ndir=d;startGame();return;}
   if(state!==S.PLAYING)return;
-  const last=inputQ.length?inputQ[inputQ.length-1]:dir;
-  if(d.x!==-last.x||d.y!==-last.y){
-    if(inputQ.length>=2)inputQ.shift();
-    inputQ.push(d);renderDir={...d};
-  }
+  if(d.x!==-dir.x||d.y!==-dir.y)ndir=d;
 },{passive:true});
 
 $pbtn.addEventListener('click',startGame);
@@ -1986,37 +1933,6 @@ document.getElementById('flip-btn').addEventListener('click',()=>{
     }
     flipping=false;updStakeButtons();
   },1600);
-});
-
-// ── camera ─────────────────────────────────────────────────────────────────
-function updateCam(){
-  if(COLS<=VW)return; // classic mode: no camera needed
-  let tx=camX,ty=camY;
-  if((state===S.PLAYING||state===S.PAUSED||state===S.GAMBLING)&&snake.length&&prev.length){
-    // lerp toward the interpolated head position for silky-smooth tracking
-    const t=state===S.PLAYING?Math.min(1,pend/ms()):0;
-    const ph=prev[0]||snake[0];
-    tx=ph.x+(snake[0].x-ph.x)*t;
-    ty=ph.y+(snake[0].y-ph.y)*t;
-  }else if(state===S.RESPAWN){
-    tx=COLS/2;ty=ROWS/2; // drift to respawn point during countdown
-  }else if(state===S.MENU&&mS.length){
-    tx=mS[0].x;ty=mS[0].y;
-  }else if(snake.length){
-    tx=snake[0].x;ty=snake[0].y;
-  }
-  camX+=(tx-camX)*.14;camY+=(ty-camY)*.14;
-  camX=Math.max(VW/2,Math.min(COLS-VW/2,camX));
-  camY=Math.max(VH/2,Math.min(ROWS-VH/2,camY));
-}
-
-// ── map size picker ─────────────────────────────────────────────────────────
-document.querySelectorAll('[data-m]').forEach(b=>{
-  b.addEventListener('click',()=>{
-    mapSz=b.dataset.m;
-    document.querySelectorAll('[data-m]').forEach(x=>x.classList.toggle('on',x.dataset.m===mapSz));
-    sfx.pip(550,.05);
-  });
 });
 
 // ── boot ───────────────────────────────────────────────────────────────────
