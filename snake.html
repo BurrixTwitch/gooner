@@ -733,6 +733,8 @@ let state=S.MENU;
 let snake,prev,dir,ndir;
 let food,bonus,pup,coin;         // items on board
 let bombs=[],bombTimer=0;
+let rival=null,rivalDir={x:1,y:0},rivalTimer=0,rivalRespawnT=0;
+let splitTail=null,splitTailDir={x:-1,y:0},splitMergeT=0;
 let score,dScore,level,ate,lives;
 let bonusT,bonusD,pupT,pupD,coinT;
 let aPow,aPowEnd;
@@ -750,6 +752,7 @@ const POWERS={
   slow: {name:'SLOW-MO',color:'#a855f7',dur:6000,sym:'◐'},
   ghost:{name:'GHOST',  color:'#00d4ff',dur:6000,sym:'◯'},
   mag:  {name:'MAGNET', color:'#ff2a6d',dur:6000,sym:'✦'},
+  split:{name:'SPLIT',  color:'#ff9500',dur:6000,sym:'⊕'},
 };
 const SSYM =['7','$','♦','★','♣','!'];
 const SCOL =['#ffd700','#39ff14','#00d4ff','#ff6b35','#a855f7','#ff2a6d'];
@@ -807,6 +810,8 @@ const CASES={
 };
 
 const GHOST_COL={body:'rgba(0,168,255,.78)',glow:'rgba(0,190,255,.11)',ambient:'rgba(0,212,255,.07)',accent:'rgba(175,235,255,.22)',head:'#00b4ef',headGlow:'#00d4ff',eye:'#00d4ff'};
+const RIVAL_COL={body:'#ff2828',glow:'rgba(255,40,40,.18)',ambient:'rgba(255,40,40,.09)',accent:'rgba(255,160,160,.22)',head:'#ff4444',headGlow:'#ff1111',eye:'#ffbbbb'};
+const SPLIT_COL={body:'rgba(255,160,0,.62)',glow:'rgba(255,160,0,.11)',ambient:'rgba(255,160,0,.07)',accent:'rgba(255,230,160,.22)',head:'rgba(255,180,50,.78)',headGlow:'rgba(255,160,0,.7)',eye:'rgba(255,240,180,.9)'};
 
 // ── inventory state ────────────────────────────────────────────────────────
 const INV={
@@ -845,6 +850,8 @@ function init(){
   dir={x:1,y:0};ndir={x:1,y:0};
   food=place();bonus=null;pup=null;coin=null;
   bombs=[];bombTimer=bombInterval();
+  rival=null;rivalTimer=0;rivalRespawnT=5000;
+  splitTail=null;splitTailDir={x:-1,y:0};splitMergeT=0;
   score=0;dScore=0;level=1;ate=0;longest=3;
   combo=0;comboT=0;bestCombo=0;
   lives=d.lives;
@@ -900,6 +907,13 @@ function ms(){
     bombTimer-=dt;
     if(bombTimer<=0&&state===S.PLAYING){trySpawnBomb();bombTimer=bombInterval();}
     const _bn=Date.now();bombs=bombs.filter(b=>_bn-b.at<b.dur);
+
+    // rival snake
+    if(rival){rivalTimer-=dt;if(rivalTimer<=0){stepRival();rivalTimer+=rivalMs();}}
+    else{rivalRespawnT-=dt;if(rivalRespawnT<=0&&snake.length){spawnRival();rivalTimer=rivalMs();}}
+
+    // split tail merge
+    if(splitTail){splitMergeT-=dt;if(splitMergeT<=0)mergeSplit();}
   }
 
   // smooth score
@@ -948,6 +962,10 @@ function tick(){
   if(snake.some((s,i)=>i!==snake.length-1&&s.x===h.x&&s.y===h.y)&&aPow!=='ghost')return die();
   const hitBomb=bombs.find(b=>b.x===h.x&&b.y===h.y);
   if(hitBomb){bombHit(hitBomb);return die();}
+  if(rival&&aPow!=='ghost'){
+    const rivalHit=rival.snake.some(s=>s.x===h.x&&s.y===h.y);
+    if(rivalHit){if(rival.snake[0].x===h.x&&rival.snake[0].y===h.y)killRival();return die();}
+  }
 
   snake.unshift(h);
   let grew=false;
@@ -1001,13 +1019,13 @@ function tick(){
     sfx.bonus();shake();addCoins(15);coinPop(bonus.x,bonus.y,'+15');bonus=null;
   }
   else if(pup&&h.x===pup.x&&h.y===pup.y){
-    const def=POWERS[pup.tp];
-    aPow=pup.tp;aPowEnd=Date.now()+def.dur;
+    const def=POWERS[pup.tp],tp=pup.tp;
     popAt(def.name,pup.x,pup.y,def.color);
     spark(pup.x,pup.y,def.color,30);
     ripple(pup.x*CELL+CELL/2,pup.y*CELL+CELL/2,def.color);
-    sfx.powerup();shake();showToast(def.name+' ACTIVE',def.color);
-    addCoins(20);coinPop(pup.x,pup.y,'+20');pup=null;
+    sfx.powerup();shake();addCoins(20);coinPop(pup.x,pup.y,'+20');pup=null;
+    if(tp==='split'){doSplit();}
+    else{aPow=tp;aPowEnd=Date.now()+def.dur;showToast(def.name+' ACTIVE',def.color);}
   }
   else if(coin&&h.x===coin.x&&h.y===coin.y){
     grew=true;spark(coin.x,coin.y,'#ffd700',36,true);
@@ -1029,6 +1047,7 @@ function tick(){
   if(bonus&&Date.now()-bonusT>bonusD)bonus=null;
   if(pup&&Date.now()-pupT>pupD)pup=null;
   if(coin&&Date.now()-coinT>10000)coin=null;
+  if(splitTail)stepSplitTail();
   hud();
 }
 
@@ -1037,7 +1056,7 @@ function die(){
   lives--;syncLives();
   sfx.death();shake();
   for(const s of snake)spark(s.x,s.y,'#ff2a6d',4,true);
-  snake=[];
+  snake=[];splitTail=null;
   if(lives<=0){gameOver();return;}
   state=S.RESPAWN;respT=2200;$fst.textContent='';
 }
@@ -1190,6 +1209,119 @@ function dBomb(b){
   ctx.globalAlpha=1;
 }
 
+// ── rival AI snake ─────────────────────────────────────────────────────────
+function rivalMs(){return{easy:420,normal:310,hard:220}[diff];}
+
+function rivalSpawnAt(){
+  if(!snake.length)return null;
+  const head=snake[0];
+  let p,t=0;
+  do{p={x:rnd(COLS),y:rnd(ROWS)};t++;}
+  while(t<300&&(Math.abs(p.x-head.x)+Math.abs(p.y-head.y)<9||snake.some(s=>s.x===p.x&&s.y===p.y)));
+  return t>=300?null:p;
+}
+
+function spawnRival(){
+  const p=rivalSpawnAt();if(!p)return;
+  const tx=p.x>0?-1:1;
+  rival={snake:[p,{x:p.x-tx,y:p.y}],dir:{x:tx,y:0}};
+  rivalRespawnT=0;
+  showToast('⚠ RIVAL SNAKE','#ff2828');
+  sfx.pip(220,.10);
+}
+
+function stepRival(){
+  if(!rival||!rival.snake.length)return;
+  const head=rival.snake[0];
+  const target=bonus||food;
+  const dirs=[{x:0,y:-1},{x:0,y:1},{x:-1,y:0},{x:1,y:0}];
+  const opp={x:-rival.dir.x,y:-rival.dir.y};
+  const cands=dirs.filter(d=>!(d.x===opp.x&&d.y===opp.y));
+
+  let best=null,bestScore=-Infinity;
+  for(const d of cands){
+    const nx=head.x+d.x,ny=head.y+d.y;
+    if(nx<0||nx>=COLS||ny<0||ny>=ROWS)continue;
+    if(rival.snake.slice(0,-1).some(s=>s.x===nx&&s.y===ny))continue;
+    const dist=target?-(Math.abs(nx-target.x)+Math.abs(ny-target.y)):0;
+    const rnd_=(Math.random()-.5)*.6;
+    if(dist+rnd_>bestScore){bestScore=dist+rnd_;best=d;}
+  }
+  if(!best){for(const d of cands){const nx=head.x+d.x,ny=head.y+d.y;if(nx>=0&&nx<COLS&&ny>=0&&ny<ROWS){best=d;break;}};}
+  if(!best){killRival();return;}
+
+  rival.dir=best;
+  const nh={x:head.x+best.x,y:head.y+best.y};
+  if(nh.x<0||nh.x>=COLS||nh.y<0||nh.y>=ROWS){killRival();return;}
+  if(rival.snake.slice(0,-1).some(s=>s.x===nh.x&&s.y===nh.y)){killRival();return;}
+  // rival hits player body
+  if(snake.some(s=>s.x===nh.x&&s.y===nh.y)){killRival();return;}
+
+  rival.snake.unshift(nh);
+  if(food&&nh.x===food.x&&nh.y===food.y){
+    food=place([bonus,pup,coin,...bombs].filter(Boolean));
+    sfx.pip(300,.05);
+  }else{rival.snake.pop();}
+}
+
+function killRival(){
+  if(!rival)return;
+  for(const s of rival.snake)spark(s.x,s.y,'#ff2828',3,true);
+  rival=null;
+  rivalRespawnT=8000+Math.random()*5000;
+  showToast('RIVAL DOWN!','#ff4400');sfx.pip(180,.08);
+}
+
+// ── split / merge ──────────────────────────────────────────────────────────
+function doSplit(){
+  if(snake.length<6||splitTail)return;
+  const mid=~~(snake.length/2);
+  splitTail=snake.splice(mid);
+  prev=prev.slice(0,snake.length);
+  if(splitTail.length>1){
+    splitTailDir={x:splitTail[0].x-splitTail[1].x,y:splitTail[0].y-splitTail[1].y};
+    if(splitTailDir.x===0&&splitTailDir.y===0)splitTailDir={x:1,y:0};
+  }else{splitTailDir={x:-dir.x,y:-dir.y};if(!splitTailDir.x&&!splitTailDir.y)splitTailDir={x:1,y:0};}
+  splitMergeT=POWERS.split.dur;
+  showToast('SNAKE SPLIT!','#ff9500');sfx.pip(660,.09);
+}
+
+function stepSplitTail(){
+  if(!splitTail||!splitTail.length)return;
+  const head=splitTail[0];
+  const target=food;
+  const dirs=[{x:0,y:-1},{x:0,y:1},{x:-1,y:0},{x:1,y:0}];
+  const opp={x:-splitTailDir.x,y:-splitTailDir.y};
+  const cands=dirs.filter(d=>!(d.x===opp.x&&d.y===opp.y));
+  let best=null,bestScore=-Infinity;
+  for(const d of cands){
+    const nx=head.x+d.x,ny=head.y+d.y;
+    if(nx<0||nx>=COLS||ny<0||ny>=ROWS)continue;
+    if(splitTail.slice(0,-1).some(s=>s.x===nx&&s.y===ny))continue;
+    const dist=target?-(Math.abs(nx-target.x)+Math.abs(ny-target.y)):0;
+    const rnd_=(Math.random()-.5)*1.2;
+    if(dist+rnd_>bestScore){bestScore=dist+rnd_;best=d;}
+  }
+  if(!best){for(const d of dirs){const nx=head.x+d.x,ny=head.y+d.y;if(nx>=0&&nx<COLS&&ny>=0&&ny<ROWS){best=d;break;}};}
+  if(!best)return;
+  splitTailDir=best;
+  const nh={x:head.x+best.x,y:head.y+best.y};
+  splitTail.unshift(nh);
+  if(food&&nh.x===food.x&&nh.y===food.y){
+    food=place([bonus,pup,coin,...bombs].filter(Boolean));
+    sfx.pip(500,.04);addCoins(3);coinPop(nh.x,nh.y,'+3');
+  }else{splitTail.pop();}
+}
+
+function mergeSplit(){
+  if(!splitTail)return;
+  snake=snake.concat(splitTail);
+  splitTail=null;splitMergeT=0;
+  showToast('MERGED!','#ff9500');
+  if(snake.length>2)spark(snake[~~(snake.length/2)].x,snake[~~(snake.length/2)].y,'#ff9500',18);
+  sfx.pip(880,.07);
+}
+
 // ── vfx ────────────────────────────────────────────────────────────────────
 function spark(gx,gy,col,n,big=false){
   const cx=gx*CELL+CELL/2,cy=gy*CELL+CELL/2;
@@ -1279,6 +1411,8 @@ function draw(){
     drawTube(mS,mD,null);
     dFood(mF.x,mF.y,'rgba(57,255,20,0.45)');
   }else if(state===S.PLAYING||state===S.GAMBLING||state===S.PAUSED){
+    if(rival&&rival.snake.length)drawTube(rival.snake,rival.dir,'rival');
+    if(splitTail&&splitTail.length){dTether();drawTube(splitTail,splitTailDir,'split');}
     drawInterp();
   }else if(snake&&snake.length){
     drawTube(snake,dir,aPow);
@@ -1367,6 +1501,21 @@ function draw(){
   if(slotSt)dSlot();
 }
 
+// ── split tether ───────────────────────────────────────────────────────────
+function dTether(){
+  if(!snake.length||!splitTail||!splitTail.length)return;
+  const a=snake[snake.length-1],b=splitTail[0];
+  const ax=a.x*CELL+CELL/2,ay=a.y*CELL+CELL/2;
+  const bx=b.x*CELL+CELL/2,by=b.y*CELL+CELL/2;
+  const pulse=.5+.3*Math.abs(Math.sin(Date.now()/300));
+  ctx.save();
+  ctx.setLineDash([4,6]);ctx.lineDashOffset=-(Date.now()/80)%10;
+  ctx.strokeStyle=`rgba(255,149,0,${pulse})`;ctx.lineWidth=1.8;
+  ctx.shadowColor='#ff9500';ctx.shadowBlur=5;
+  ctx.beginPath();ctx.moveTo(ax,ay);ctx.lineTo(bx,by);ctx.stroke();
+  ctx.setLineDash([]);ctx.shadowBlur=0;ctx.restore();
+}
+
 // ── bezier snake ───────────────────────────────────────────────────────────
 function drawInterp(){
   if(!snake.length)return;
@@ -1382,8 +1531,7 @@ function drawInterp(){
 
 function drawTube(pos,hd,pw){
   if(!pos.length)return;
-  const ghost=pw==='ghost';
-  const sk=ghost?GHOST_COL:getSkin().c(Date.now());
+  const sk=pw==='ghost'?GHOST_COL:pw==='rival'?RIVAL_COL:pw==='split'?SPLIT_COL:getSkin().c(Date.now());
   const sw=CELL*.76;
   const isJump=(a,b)=>Math.abs(a.x-b.x)>1||Math.abs(a.y-b.y)>1;
   const cc=p=>({x:p.x*CELL+CELL/2,y:p.y*CELL+CELL/2});
